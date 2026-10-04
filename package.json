@@ -1,0 +1,11 @@
+{
+  "name": "ore-mock-demo",
+  "version": "0.1.0",
+  "description": "Client demo: AI mock exam platform for dental ORE Part 2 (Cosmident-style). Zero dependencies.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "license": "UNLICENSED"
+}

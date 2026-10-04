@@ -20,6 +20,23 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// Saved attempts live in this browser (demo). Production: NestJS + Postgres, per logged-in user.
+const store = {
+  key: 'dentiprep-attempts',
+  mem: [],
+  all() {
+    try { return JSON.parse(localStorage.getItem(this.key)) || []; } catch { return this.mem; }
+  },
+  write(list) {
+    this.mem = list;
+    try { localStorage.setItem(this.key, JSON.stringify(list)); } catch {}
+  },
+  get(id) { return this.all().find((a) => a.id === id); },
+  add(a) { this.write([a, ...this.all()]); },
+  update(id, patch) { this.write(this.all().map((a) => (a.id === id ? { ...a, ...patch } : a))); },
+  clear() { this.write([]); },
+};
+
 function toast(msg) {
   const t = document.createElement('div');
   t.className = 'toast';
@@ -238,7 +255,8 @@ async function viewExam(stationId) {
     </div>
   </div>`;
 
-  const { sessionId, opening } = await api('/sessions', { method: 'POST', body: { stationId } });
+  const { sessionId, opening, startedAt } = await api('/sessions', { method: 'POST', body: { stationId } });
+  const session = { id: sessionId, stationId, startedAt, transcript: [{ from: 'persona', text: opening }], revealed: [] };
   let finished = false;
   const stops = [];
   const finish = async (answers) => {
@@ -248,7 +266,11 @@ async function viewExam(stationId) {
     speechSynthesis?.cancel();
     $app.querySelector('#end').disabled = true;
     toast('Marking your answers…');
-    const attempt = await api(`/sessions/${sessionId}/finish`, { method: 'POST', body: { answers } });
+    const attempt = await api(`/sessions/${sessionId}/finish`, {
+      method: 'POST',
+      body: { stationId, answers, transcript: session.transcript, startedAt },
+    });
+    store.add(attempt);
     location.hash = `#/result/${attempt.id}`;
   };
 
@@ -257,7 +279,7 @@ async function viewExam(stationId) {
   voiceBtn.onclick = () => { window.__voiceOn = !window.__voiceOn; voiceBtn.textContent = window.__voiceOn ? '🔊' : '🔇'; if (!window.__voiceOn) speechSynthesis?.cancel(); };
 
   let collect = () => [];
-  if (s.type === 'osce') collect = runOsce(s, sessionId, opening);
+  if (s.type === 'osce') collect = runOsce(s, session, opening);
   if (s.type === 'viva') collect = runViva(s, opening, () => finish(collect()));
   if (s.type === 'longcase') collect = runLongCase(s, opening, () => finish(collect()));
 
@@ -266,7 +288,7 @@ async function viewExam(stationId) {
   cleanup = () => { stops.forEach((f) => f()); speechSynthesis?.cancel(); };
 }
 
-function runOsce(s, sessionId, opening) {
+function runOsce(s, session, opening) {
   document.getElementById('side').innerHTML = `
     <div class="hint">Facts uncovered <span id="fact-count" class="mono">0/${s.totalFacts}</span></div>
     <div class="meter"><i id="fact-bar" style="width:0%"></i></div>
@@ -291,7 +313,13 @@ function runOsce(s, sessionId, opening) {
   const send = async (text, via) => {
     if (!text.trim()) return;
     add('candidate', text, via === 'spoken' ? '🎤 spoken' : '');
-    const r = await api(`/sessions/${sessionId}/message`, { method: 'POST', body: { text, via } });
+    session.transcript.push({ from: 'candidate', text, via });
+    const r = await api(`/sessions/${session.id}/message`, {
+      method: 'POST',
+      body: { stationId: session.stationId, text, revealed: session.revealed },
+    });
+    session.revealed = [...new Set([...session.revealed, ...r.unlocked])];
+    session.transcript.push({ from: 'persona', text: r.reply });
     add('persona', r.reply);
     speak(r.reply, s.persona.voice, 'persona-av');
     document.getElementById('fact-count').textContent = `${r.revealed}/${r.totalFacts}`;
@@ -381,7 +409,8 @@ function highlight(text, match) {
 }
 
 async function viewResult(id) {
-  const a = await api(`/attempts/${id}`);
+  const a = store.get(id);
+  if (!a) throw new Error('This result is not saved in this browser.');
   const r = a.result;
   const pass = r.verdict === 'PASS';
   const C = 2 * Math.PI * 62;
@@ -440,14 +469,15 @@ async function viewResult(id) {
   if (btn) btn.onclick = async () => {
     const reason = document.getElementById('reason').value.trim();
     if (!reason) return toast('Tell the mentor what you disagree with');
-    const c = await api(`/attempts/${id}/contest`, { method: 'POST', body: { reason } });
+    const c = { reason: reason.slice(0, 500), status: 'Queued for mentor review', at: new Date().toISOString() };
+    store.update(id, { contested: c });
     document.getElementById('contest').innerHTML = `<span class="pill">${esc(c.status)}</span><p class="muted" style="margin-top:10px">“${esc(c.reason)}”</p>`;
     toast('Sent to mentor review');
   };
 }
 
 async function viewDashboard() {
-  const list = await api('/attempts');
+  const list = store.all();
   const passed = list.filter((a) => a.result.verdict === 'PASS').length;
   const avg = list.length ? Math.round(list.reduce((s, a) => s + a.result.percent, 0) / list.length) : 0;
   const refund = list.length >= 2 && passed >= 1;
@@ -472,7 +502,7 @@ async function viewDashboard() {
 
   document.getElementById('del').onclick = async () => {
     if (!confirm('Delete every recording and score? This cannot be undone.')) return;
-    await api('/account', { method: 'DELETE' });
+    store.clear();
     toast('All data deleted');
     viewDashboard();
   };

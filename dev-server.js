@@ -1,4 +1,4 @@
-// Local dev server. Plain Node http, zero dependencies.
+// Local dev server (named dev-server.js so Vercel does not treat it as the app entry). Plain Node http.
 // On Vercel the same API runs from api/index.js and public/ is served as static files.
 
 const http = require('http');

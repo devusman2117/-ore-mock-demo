@@ -19,7 +19,7 @@ Import the GitHub repo at vercel.com/new. No settings to change: `vercel.json` s
 ## What's inside
 
 ```
-server.js            Local dev server (static files + API)
+dev-server.js        Local dev server (static files + API)
 api/index.js         Vercel serverless entry for the same API
 lib/handler.js       Stateless API routes shared by both
 engine/stations.js   Exam content: OSCE station, ME viva, DTP long case, hidden facts, rubrics
